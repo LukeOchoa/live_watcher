@@ -1,7 +1,7 @@
 use live_watch::live_watch::live_watch_app::LiveWatch;
 
-#[tokio::main]
-async fn main() {
+// #[tokio::main]
+fn main() {
     let option = eframe::NativeOptions::default();
     eframe::run_native(
         "live_watch",

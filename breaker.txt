@@ -1,6 +1,5 @@
 Flower Facade
 
-
 you know it to be true,
 you know this also too
 
@@ -26,3 +25,4 @@ finally at peace with the world's ballad of prosey speech
 
 
 we abate to sullen craze
+

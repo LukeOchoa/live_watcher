@@ -1,10 +1,45 @@
 pub mod cmd_args;
 pub mod files;
 pub mod live_watch;
+pub mod windows;
+
+// Tis but a scratch
 
 pub type MagicError = Box<dyn std::error::Error>;
+pub type WatcherX = notify::INotifyWatcher;
+
+// For development placeholder
+pub fn panik() {
+    panic!("Temp Panik!")
+}
+
+use std::sync::{Arc, Mutex, MutexGuard};
+pub fn force_am_once<Any>(am: Arc<Mutex<Any>>, f: impl FnOnce(MutexGuard<Any>)) {
+    // am.lock().unwrap()
+    // let x = ;
+    f(am.lock().unwrap());
+}
+
+pub fn force_am<Any>(am: Arc<Mutex<Any>>, f: impl Fn(MutexGuard<Any>)) {
+    // am.lock().unwrap()
+    // let x = ;
+    f(am.lock().unwrap());
+}
+
+use chrono::{Timelike, Utc};
+pub fn time_of_day() -> String {
+    // "Hour:{} Minute:{} Second:{}",
+    let time = Utc::now();
+    format!("{}:{} -- {}", time.hour(), time.minute(), time.second())
+}
+
+pub fn font_size_default() -> egui::FontId {
+    egui::FontId::proportional(30.0)
+}
 
 pub mod err_tools {
+    use crate::MagicError;
+
     #[derive(Debug)]
     pub struct ErrorX {
         details: String,
@@ -20,6 +55,11 @@ pub mod err_tools {
             Box::new(ErrorX {
                 details: msg.to_string(),
             })
+        }
+        pub fn magic_err(msg: impl Into<String>) -> MagicError {
+            Box::new(ErrorX {
+                details: msg.into(),
+            }) as MagicError
         }
     }
 
@@ -119,5 +159,38 @@ pub mod eframe_tools {
             self.event = None;
             println!("Inside event: <{:?}>", self.event);
         }
+    }
+
+    pub fn scroll_and_vert(ui: &mut Ui, id: impl std::hash::Hash, f: impl FnOnce(&mut Ui)) {
+        eframe::egui::ScrollArea::vertical()
+            .id_source(id)
+            .show(ui, |ui| ui.horizontal_wrapped(|ui| f(ui)));
+    }
+    use crate::string_tools::newliner;
+    pub fn space_vert(amount: usize, ui: &mut Ui) {
+        //! Add vertical space using newlines
+        ui.label(format!("{}", newliner(amount)));
+    }
+
+    pub fn make_rich(string: String, font_size: egui::FontId) -> egui::RichText {
+        egui::RichText::new(string).font(font_size)
+    }
+}
+
+pub mod string_tools {
+    fn quick_maker(amount: usize, character: &str) -> String {
+        let mut s = String::default();
+        for _ in 0..amount {
+            s = format!("{}{}", s, character)
+        }
+        s
+    }
+
+    pub fn newliner(amount: usize) -> String {
+        quick_maker(amount, "\n")
+    }
+
+    pub fn tabber(amount: usize) -> String {
+        quick_maker(amount, "\t")
     }
 }
