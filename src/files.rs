@@ -7,7 +7,6 @@ use crate::{
 };
 use std::{
     collections::{BTreeMap, HashMap},
-    ops::DerefMut,
     path::{Path, PathBuf},
 };
 

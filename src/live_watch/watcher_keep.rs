@@ -1,9 +1,7 @@
-// use crate::MagicError;
-// use crate::MagicError;
-// use crate::err_tools;
 use crate::WatcherX;
 
 use crate::files;
+use crate::panik;
 use crate::windows::error_messages::ErrorSender;
 use crate::windows::generic_windows::Loglet;
 
@@ -13,6 +11,17 @@ use notify::{RecursiveMode, Watcher};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::{Receiver, Sender};
+
+pub struct RenameEvent {
+    from: PathBuf,
+    to: PathBuf,
+}
+
+pub enum WatcherUpdateX {
+    FileContent(files::File),
+    FileRename(RenameEvent),
+    FileDelete(PathBuf),
+}
 
 pub type WatcherUpdate = files::File;
 async fn load_file(file_path: PathBuf, file_tx: Sender<WatcherUpdate>, err_tx: ErrorSender) {
@@ -40,7 +49,19 @@ fn on_modify_event(
     err_tx: ErrorSender,
     rt_clone: Arc<Mutex<tokio::runtime::Runtime>>,
 ) {
-    if let ModifyKind::Data(_d) = mod_kind {
+    if let ModifyKind::Name(rename) = mod_kind {
+        match rename {
+            notify::event::RenameMode::From => {}
+
+            notify::event::RenameMode::To => {}
+
+            notify::event::RenameMode::Both => {}
+
+            _ => panik(),
+        }
+    }
+
+    if let ModifyKind::Data(_data_change) = mod_kind {
         println!(
             "Modification occured: Here is the list of affected paths: <{:?}>",
             effected_paths
