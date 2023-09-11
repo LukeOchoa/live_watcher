@@ -120,6 +120,10 @@ pub mod eframe_tools {
             }
         }
 
+        pub fn replace_options(&mut self, options: Options) {
+            self.options = options
+        }
+
         pub fn get_selected_option(&self) -> SelectedOption {
             self.selected_option.clone()
         }

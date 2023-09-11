@@ -1,8 +1,8 @@
 use crate::{
     cmd_args,
     eframe_tools::{self, make_rich, ModalMachine},
-    font_size_default,
-    live_watch::watcher_keep,
+    files, font_size_default,
+    live_watch::watcher_keep::{self, WatcherUpdate},
     MagicError,
 };
 use std::{
@@ -98,13 +98,14 @@ impl FileForm {
             let mut rich_sep = Vec::new();
             let mut buffer = Vec::new();
             let mut track = false;
-            for chr in s.chars() {
+            let len = s.chars().count() - 1;
+            for (index, chr) in s.chars().enumerate() {
                 buffer.push(chr);
                 if chr != ' ' || chr != '\n' && !track {
                     track = true
                 }
 
-                if chr == '\n' {
+                if chr == '\n' || index == len {
                     if track {
                         let text = do_seperation(buffer);
                         let rich_text = make_rich(text, font_size_default());
@@ -114,6 +115,7 @@ impl FileForm {
                     track = false;
                 }
             }
+
             Some(rich_sep)
         });
 
@@ -138,8 +140,6 @@ impl FileForm {
             all_line_separation,
         }
     }
-
-    // fn to_line_sep(string: String) -> String {}
 }
 
 pub struct File {
@@ -246,11 +246,10 @@ impl FileCache {
             .keys()
             .for_each(|s| b.push(s.display()));
         let cached_files = self.get_cached_files_ref();
-        println!("cached files");
+        // println!("cached files");
         let file = cached_files.get(self.get_current_file_ref())?.as_ref();
-        println!("files: <{}>", self.current_file.display());
+        // println!("files: <{}>", self.current_file.display());
         let file = file?;
-        println!("files again?");
         Some(file.file_ref())
     }
 
@@ -263,13 +262,13 @@ impl FileCache {
         let current_file = current_path.into();
         let dir_list = dir_list.into_keys().collect();
         let cached_files = load_dir_files(dir_list);
+
         let allow_caching = true;
         FileCache {
             current_file: first_filepath.into(),
             cached_files,
             allow_caching,
         }
-        // .map(|pb| Path::canonicalize(&pb).unwrap())
     }
 }
 
@@ -338,7 +337,6 @@ impl WatchList {
         }
 
         let mm = ModalMachine::new(first.clone(), dir_list.clone(), name.into());
-        println!("First Path Buff: <{}>", first.display());
         let file_cache = FileCache::new(current_dir, first, dir_list);
 
         WatchList {
@@ -348,37 +346,90 @@ impl WatchList {
         }
     }
 
-    pub fn handle_udpates(&mut self, master_path_pb: PathBuf) {
+    pub fn handle_updates(&mut self, master_path_pb: PathBuf) {
         let waker = futures::task::noop_waker();
         let mut cx = Context::from_waker(&waker);
 
         while let Poll::Ready(op) = self.get_file_update_rx_mut().poll_recv(&mut cx) {
+            println!("Poll trigger");
             match op {
-                Some(updated_file) => {
-                    // while let Some(updated_file) = self.get_file_update_rx_mut().poll_recv() {
-                    // let path_buf = updated_file.get_path_ref()
-                    println!(
-                        "-------------------------- <{}> --------------------------",
-                        updated_file.get_path_ref().display()
-                    );
-                    // let pb = &Path::canonicalize(updated_file.get_path_ref()).unwrap();
-                    println!(
-                        "All Keys: <{:?}>",
-                        self.get_file_cache_mut()
-                            .get_cached_files_ref()
-                            .keys()
-                            .collect::<Vec<&PathBuf>>(),
-                    );
-                    let key =
-                        get_directory_specific_path(&master_path_pb, updated_file.get_path_ref())
+                Some(watcher_update) => {
+                    println!("Watcher Update Recieved");
+                    match watcher_update {
+                        WatcherUpdate::FileContent(updated_file) => {
+                            println!(
+                                "-------------------------- <{}> --------------------------",
+                                updated_file.get_path_ref().display()
+                            );
+                            // let pb = &Path::canonicalize(updated_file.get_path_ref()).unwrap();
+                            println!(
+                                "All Keys: <{:?}>",
+                                self.get_file_cache_mut()
+                                    .get_cached_files_ref()
+                                    .keys()
+                                    .collect::<Vec<&PathBuf>>(),
+                            );
+
+                            println!(
+                                "Good: master Path: <{}>, updated file path: <{}>",
+                                master_path_pb.display(),
+                                updated_file.get_path_ref().display()
+                            );
+
+                            let key = get_directory_specific_path(
+                                &master_path_pb,
+                                updated_file.get_path_ref(),
+                            )
                             .unwrap();
-                    self.get_file_cache_mut()
-                        .get_cached_files_mut()
-                        .get_mut(&key)
-                        .and_then(|file| {
-                            *file = Some(updated_file);
-                            None::<Option<File>>
-                        });
+                            self.get_file_cache_mut()
+                                .get_cached_files_mut()
+                                .get_mut(&key)
+                                .and_then(|file| {
+                                    *file = Some(updated_file);
+                                    None::<Option<File>>
+                                });
+                        }
+
+                        WatcherUpdate::FileRename(rename_event) => {
+                            println!(
+                                "Watcher Update FileRename: current master path: <{}>",
+                                master_path_pb.display()
+                            );
+                            let (from, to) = rename_event.from_and_to_ref();
+                            let from =
+                                files::get_directory_specific_path(&master_path_pb, from).unwrap();
+                            let to =
+                                files::get_directory_specific_path(&master_path_pb, to).unwrap();
+                            // let (from, to) = files::get_directory_specific_path(, )
+                            println!("New Keys: <{}> || <{}>", from.display(), to.display());
+                            println!(
+                                "All Keys: <{:?}>",
+                                self.get_file_cache_mut().get_cached_files_mut().keys()
+                            );
+                            if let Some(value) = self
+                                .get_file_cache_mut()
+                                .get_cached_files_mut()
+                                .remove(&from)
+                            {
+                                self.get_file_cache_mut()
+                                    .get_cached_files_mut()
+                                    .insert(to.to_owned(), value);
+
+                                let options = self
+                                    .get_file_cache_mut()
+                                    .get_cached_files_mut()
+                                    .iter()
+                                    .map(|(pb, _)| (pb.to_owned(), ()))
+                                    .collect();
+                                self.modal_machine_mut().replace_options(options);
+                                println!("--------------------------------------------------------------------------------------------------------------------------------------------");
+                            }
+                        }
+
+                        _ => {
+                            println!("nothing watch update");
+                        }
+                    }
                 }
                 None => {
                     panic!("Error, handle updates some how broke");
@@ -390,16 +441,16 @@ impl WatchList {
     }
 }
 
-fn get_directory_specific_path(
-    base: &PathBuf,
-    strip: &PathBuf,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub fn get_directory_specific_path(base: &PathBuf, strip: &PathBuf) -> Result<PathBuf, MagicError> {
     let base = Path::canonicalize(&base)?;
+    let mut strip = strip.to_owned();
     let absolute_path = base.parent().unwrap();
 
-    let strip = Path::canonicalize(strip)?;
+    if !strip.is_absolute() {
+        strip = Path::canonicalize(&strip)?;
+    }
+
     let stripped = strip.strip_prefix(&absolute_path)?.to_path_buf();
-    // let prefix = .strip_prefix()
 
     Ok(stripped)
 }
@@ -416,10 +467,8 @@ pub fn make_dir_list(current_dir: &PathBuf) -> BTreeMap<PathBuf, ()> {
 }
 
 fn load_dir_files(file_list: Vec<PathBuf>) -> CachedFiles {
-    // file_list.iter_mut().for_each(|(pb, file)| file.);
     let mut cached_files = HashMap::new();
     file_list.into_iter().for_each(|s| {
-        // let f = s.is_file().then_some(File::load_file(&s));
         let f = if s.is_file() {
             Some(File::load_file(&s).unwrap())
         } else {
@@ -433,7 +482,6 @@ fn load_dir_files(file_list: Vec<PathBuf>) -> CachedFiles {
 
 pub fn get_master_path() -> Result<(MasterPath, Receiver<PathBuf>), MagicError> {
     let maybe_args = cmd_args::get_arg()?;
-    println!("maybe args:__________<{:?}>", maybe_args);
 
     let path_buf = maybe_args.and_then(|cmd_arg| Some(Path::new(&cmd_arg).to_path_buf()));
 

@@ -17,20 +17,58 @@ pub struct RenameEvent {
     to: PathBuf,
 }
 
-pub enum WatcherUpdateX {
+impl RenameEvent {
+    fn get_from_ref(&self) -> &PathBuf {
+        &self.from
+    }
+    fn get_to_ref(&self) -> &PathBuf {
+        &self.to
+    }
+}
+
+impl RenameEvent {
+    fn new(from: impl Into<PathBuf>, to: impl Into<PathBuf>) -> RenameEvent {
+        let from = from.into();
+        let to = to.into();
+        RenameEvent { from, to }
+    }
+
+    pub fn from_and_to_ref(&self) -> (&PathBuf, &PathBuf) {
+        (self.get_from_ref(), self.get_to_ref())
+    }
+}
+
+pub enum WatcherUpdate {
     FileContent(files::File),
     FileRename(RenameEvent),
     FileDelete(PathBuf),
 }
 
-pub type WatcherUpdate = files::File;
+impl WatcherUpdate {
+    fn new_content(file: files::File) -> WatcherUpdate {
+        WatcherUpdate::FileContent(file)
+    }
+
+    fn new_rename(from: PathBuf, to: PathBuf) -> WatcherUpdate {
+        WatcherUpdate::FileRename(RenameEvent::new(from, to))
+    }
+
+    fn new_delete(deleted_path: PathBuf) -> WatcherUpdate {
+        WatcherUpdate::FileDelete(deleted_path)
+    }
+}
+
+// pub type WatcherUpdate = files::File;
 async fn load_file(file_path: PathBuf, file_tx: Sender<WatcherUpdate>, err_tx: ErrorSender) {
     // let file = files::File::load_file(&file_path).map_err(|err| Loglet::err(err));
     let result = files::File::load_file(&file_path).map_err(|err| Loglet::err(err));
 
     // keep
     match result {
-        Ok(file) => file_tx.send(file).await.unwrap(),
+        Ok(file) => file_tx
+            .send(WatcherUpdate::new_content(file))
+            .await
+            .unwrap(),
         Err(err) => err_tx.send(err).await.unwrap(),
     }
 
@@ -42,6 +80,21 @@ async fn load_file(file_path: PathBuf, file_tx: Sender<WatcherUpdate>, err_tx: E
     // file_tx.send(file).await.unwrap();
 }
 
+fn send_watcher_update(
+    future: impl std::future::Future<Output = ()> + Send + 'static,
+    // effected_paths: Vec<PathBuf>,
+    rt: Arc<Mutex<tokio::runtime::Runtime>>,
+    // watcher_sender: Sender<WatcherUpdate>,
+    // err_sender: ErrorSender,
+) {
+    loop {
+        if let Ok(rt) = rt.try_lock() {
+            rt.spawn(future);
+            break;
+        }
+    }
+}
+
 fn on_modify_event(
     mod_kind: ModifyKind,
     effected_paths: Vec<PathBuf>,
@@ -49,37 +102,76 @@ fn on_modify_event(
     err_tx: ErrorSender,
     rt_clone: Arc<Mutex<tokio::runtime::Runtime>>,
 ) {
-    if let ModifyKind::Name(rename) = mod_kind {
-        match rename {
+    match mod_kind {
+        ModifyKind::Name(rename) => match rename {
             notify::event::RenameMode::From => {}
 
             notify::event::RenameMode::To => {}
 
-            notify::event::RenameMode::Both => {}
+            notify::event::RenameMode::Both => {
+                println!("--------------");
+                println!("--------------");
+                println!("--------------");
+                let the_future = async move {
+                    let from = effected_paths.get(0).unwrap().to_owned();
+                    let to = effected_paths.get(1).unwrap().to_owned();
+                    let watcher_update = WatcherUpdate::new_rename(from, to);
+                    file_tx.send(watcher_update).await.unwrap();
+                    println!("Sent");
+                };
+                send_watcher_update(the_future, rt_clone);
+            }
 
             _ => panik(),
+        },
+
+        ModifyKind::Data(_data_change) => {
+            println!(
+                "Modification occured: Here is the list of affected paths: <{:?}>",
+                effected_paths
+            );
+            let the_future = async move {
+                for path_buf in effected_paths {
+                    load_file(path_buf, file_tx.clone(), err_tx.clone()).await;
+                }
+            };
+            send_watcher_update(the_future, rt_clone);
         }
+        _ => {}
     }
 
-    if let ModifyKind::Data(_data_change) = mod_kind {
-        println!(
-            "Modification occured: Here is the list of affected paths: <{:?}>",
-            effected_paths
-        );
+    // if let ModifyKind::Name(rename) = mod_kind {
+    //     match rename {
+    //         notify::event::RenameMode::From => {}
 
-        loop {
-            if let Ok(rt) = rt_clone.try_lock() {
-                let file_tx2 = file_tx.clone();
-                let err_tx2 = err_tx.clone();
-                rt.spawn(async move {
-                    for path_buf in effected_paths {
-                        load_file(path_buf, file_tx2.clone(), err_tx2.clone()).await;
-                    }
-                });
-                break;
-            }
-        }
-    }
+    //         notify::event::RenameMode::To => {}
+
+    //         notify::event::RenameMode::Both => {
+    //             let the_future = async move {
+    //                 let from = effected_paths.get(0).unwrap().to_owned();
+    //                 let to = effected_paths.get(1).unwrap().to_owned();
+    //                 let watcher_update = WatcherUpdate::new_rename(from, to);
+    //                 file_tx.send(watcher_update).await.unwrap();
+    //             };
+    //             send_watcher_update(the_future, rt_clone.clone());
+    //         }
+
+    //         _ => panik(),
+    //     }
+    // }
+
+    // if let ModifyKind::Data(_data_change) = mod_kind {
+    //     println!(
+    //         "Modification occured: Here is the list of affected paths: <{:?}>",
+    //         effected_paths
+    //     );
+    //     let the_future = async move {
+    //         for path_buf in effected_paths {
+    //             load_file(path_buf, file_tx.clone(), err_tx.clone()).await;
+    //         }
+    //     };
+    //     send_watcher_update(the_future, rt_clone);
+    // }
 }
 
 fn to_proc<D: std::fmt::Debug>(d: D, msg: &str) {
@@ -87,7 +179,7 @@ fn to_proc<D: std::fmt::Debug>(d: D, msg: &str) {
 }
 
 pub fn create_watcher_with_actions(
-    file_tx: Sender<files::File>,
+    file_tx: Sender<WatcherUpdate>,
     err_tx: ErrorSender,
     rt: Arc<Mutex<tokio::runtime::Runtime>>,
 ) -> notify::INotifyWatcher {
