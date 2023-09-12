@@ -1,15 +1,13 @@
-// use std::fs::create_dir;
+//
 
-// use egui::Context;
-
-// use egui::RichText;
-// use crate::{err_tools, files};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::eframe_tools::make_rich;
+use crate::files;
 use crate::files::MasterPath;
-use crate::files::{self, WatchList};
 use crate::live_watch::settings;
+use crate::live_watch::settings::TextMode;
 use crate::windows::error_messages::ErrorMessage;
 use crate::windows::generic_windows::GenericWindow;
 
@@ -27,17 +25,26 @@ impl LiveWatch {
     fn get_watch_list_mut(&mut self) -> &mut Option<files::WatchList> {
         &mut self.watch_list
     }
+    fn get_watch_list_ref(&self) -> &Option<files::WatchList> {
+        &self.watch_list
+    }
     fn get_master_path_ref(&self) -> &MasterPath {
         &self.master_path
     }
     fn get_settings_mut(&mut self) -> &mut settings::Settings {
         &mut self.settings
     }
+    fn get_settings_ref(&self) -> &settings::Settings {
+        &self.settings
+    }
 }
 
 impl LiveWatch {
     fn watch_list_mut(&mut self) -> &mut Option<files::WatchList> {
         self.get_watch_list_mut()
+    }
+    fn watch_list_ref(&self) -> Option<&files::WatchList> {
+        self.get_watch_list_ref().as_ref()
     }
 
     pub fn master_path_pb_ref(&self) -> &Option<PathBuf> {
@@ -46,6 +53,9 @@ impl LiveWatch {
 
     fn settings_mut(&mut self) -> &mut settings::Settings {
         self.get_settings_mut()
+    }
+    fn settings_ref(&self) -> &settings::Settings {
+        self.get_settings_ref()
     }
 }
 
@@ -91,7 +101,29 @@ impl Default for LiveWatch {
     }
 }
 
-fn header() {}
+/// The Name of the file currently being displayed
+fn header(lw: &mut LiveWatch, ui: &mut egui::Ui) {
+    // Create the filename: TODO: change this as stored info in livewatch struct or something. It does this like 60 times a second every second LOL
+    let filename = lw
+        .watch_list_ref()
+        .and_then(|wl| {
+            let filename = wl
+                .modal_machine_ref()
+                .get_selected_option()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned();
+
+            Some(format!("File Name: <{}>", filename))
+        })
+        .unwrap_or(String::from("File Name: <No File Name>"));
+    let header = make_rich(filename, lw.settings_ref().font_size_ref().to_owned());
+
+    // display header to user interface
+    ui.label(header);
+}
 
 fn user_settings(lw: &mut LiveWatch, ui: &mut egui::Ui, ctx: egui::Context) {
     lw.err_msg.display.namae("Error Messages");
@@ -100,48 +132,26 @@ fn user_settings(lw: &mut LiveWatch, ui: &mut egui::Ui, ctx: egui::Context) {
     egui::introspection::font_id_ui(ui, &mut lw.settings_mut().font_size_mut());
 
     ui.horizontal(|ui| {
+        let text_mode = lw.settings_mut().text_mode_mut();
+        ui.radio_value(text_mode, settings::TextMode::Standard, "Standard");
+        ui.radio_value(text_mode, settings::TextMode::Newline, "Separate Lines");
         ui.radio_value(
-            lw.settings_mut().text_mode_mut(),
-            settings::TextMode::Newline,
-            "Separate Lines",
-        );
-        ui.radio_value(
-            lw.settings_mut().text_mode_mut(),
+            text_mode,
             settings::TextMode::AllNewline,
             "All Separate Lines",
         );
         ui.radio_value(
-            lw.settings_mut().text_mode_mut(),
+            text_mode,
             settings::TextMode::Selectable,
             "Highlight/Copyable Mode",
         );
+
+        let current = lw.settings_ref().word_wrap_ref().to_owned();
+        if ui.radio(current, "Word Wrap").clicked() {
+            lw.settings_mut().word_wrap_set(!current);
+        }
     });
 }
-
-fn load_watch_list(lw: &mut LiveWatch) {
-    if let None = lw.watch_list {}
-}
-
-fn display_paths(lw: &mut LiveWatch, ui: &mut egui::Ui) {
-    if let None = lw.watch_list_mut() {}
-}
-
-// fn handle_directory_modal_machine(lw: &mut LiveWatch, ui: &mut egui::Ui) {
-//     lw.watch_list_mut().as_mut().and_then(|wl| {
-//         // Display Modal Machine
-//         wl.modal_machine_mut().modal_machine(5, ui);
-
-//         // On selected file, set the newly selected file
-//         wl.modal_machine_mut()
-//             .use_event()
-//             .and_then(|selected_option| {
-//                 wl.file_cache_mut().current_file_set(selected_option);
-//                 None::<PathBuf>
-//             });
-
-//         None::<WatchList>
-//     });
-// }
 
 fn display_directory_list(lw: &mut LiveWatch, ui: &mut egui::Ui) -> Option<()> {
     let watch_list = lw.watch_list_mut().as_mut()?;
@@ -150,7 +160,7 @@ fn display_directory_list(lw: &mut LiveWatch, ui: &mut egui::Ui) -> Option<()> {
     None
 }
 
-fn use_directory_list_mm_event(lw: &mut LiveWatch, ui: &mut egui::Ui) -> Option<()> {
+fn use_directory_list_mm_event(lw: &mut LiveWatch) -> Option<()> {
     // On event (if an event happens), set the newly selected file as the current file
     let watch_list = lw.watch_list_mut().as_mut()?;
     let selected_option = watch_list.modal_machine_mut().use_event()?;
@@ -161,63 +171,61 @@ fn use_directory_list_mm_event(lw: &mut LiveWatch, ui: &mut egui::Ui) -> Option<
     None
 }
 
-fn display_file(lw: &mut LiveWatch, ui: &mut egui::Ui) -> Option<()> {
-    let watch_list = lw.watch_list.as_ref()?;
-    let file_form = watch_list.file_cache_ref().full_file()?;
-    let rich_texts = file_form.line_separation_ref().as_ref()?;
-
-    for rt in rich_texts {
-        ui.add(egui::Label::new(rt.clone()));
+fn render_option(text_mode: &TextMode) -> impl Fn(&mut egui::Ui) {
+    match text_mode {
+        TextMode::Newline => |ui: &mut egui::Ui| {
+            ui.separator();
+        },
+        TextMode::AllNewline => |ui: &mut egui::Ui| {
+            ui.separator();
+        },
+        TextMode::Selectable => |ui: &mut egui::Ui| {},
+        TextMode::Standard => |ui: &mut egui::Ui| {},
     }
-    None
+}
+
+fn display_file(lw: &mut LiveWatch, ui: &mut egui::Ui) {
+    let subfn = |ui: &mut egui::Ui| -> Option<()> {
+        let watch_list = lw.watch_list.as_ref()?;
+        let file_form = watch_list.file_cache_ref().full_file()?;
+        let rich_texts = file_form.get_file_text(lw.settings_ref().text_mode_ref())?;
+        let font_id = lw.settings.font_size_ref().to_owned();
+
+        // TODO: this is so unnecessarily expensive, but egui doesnt support selectable text properly yet... either store this somewhere as a string and rip it out or wait for egui to do its thing...
+        if let TextMode::Selectable = lw.settings_ref().text_mode_ref() {
+            let mut text: String = rich_texts.iter().map(|rt| rt.text().to_string()).collect();
+            ui.add(egui::TextEdit::multiline(&mut text));
+            return None;
+        }
+
+        // println!("file text");
+        for rt in rich_texts {
+            // println!("<{}>", rt.text());
+            ui.add(egui::Label::new(rt.clone().font(font_id.clone())));
+            render_option(lw.settings_ref().text_mode_ref())(ui);
+        }
+        // println!("/n");
+
+        None
+    };
+
+    egui::ScrollArea::both().show(ui, |ui| {
+        subfn(ui);
+        ui.allocate_space(ui.available_size());
+    });
 }
 
 impl eframe::App for LiveWatch {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            header(self, ui);
             user_settings(self, ui, ctx.clone());
-            ui.label("Breaker");
 
             display_directory_list(self, ui);
-            use_directory_list_mm_event(self, ui);
+            use_directory_list_mm_event(self);
+            ui.separator();
+
             display_file(self, ui);
-
-            // if let None = self.watch_list {
-            // } else {
-            //     self.watch_list_mut()
-            //         .as_mut()
-            //         .unwrap()
-            //         .modal_machine_mut()
-            //         .modal_machine(5, ui);
-
-            //     if let Some(selected_option) = self
-            //         .watch_list_mut()
-            //         .as_mut()
-            //         .unwrap()
-            //         .modal_machine_mut()
-            //         .use_event()
-            //     {
-            //         self.watch_list_mut()
-            //             .as_mut()
-            //             .unwrap()
-            //             .file_cache_mut()
-            //             .current_file_set(selected_option);
-            //     }
-            //     || -> Option<()> {
-            //         let watch_list = self.watch_list.as_ref()?;
-            //         // println!("watch list");
-            //         let file_form = watch_list.file_cache_ref().full_file()?;
-            //         // println!("File form");
-            //         let rich_texts = file_form.line_separation_ref().as_ref()?;
-            //         // println!("rich texts");
-            //         // println!("fileform before rich text: <{}>", file_form);
-            //         for rt in rich_texts {
-            //             ui.add(egui::Label::new(rt.clone()));
-            //         }
-
-            //         None
-            //     }();
-            // }
         });
 
         self.err_msg.block_update_log();

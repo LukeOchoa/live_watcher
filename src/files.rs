@@ -42,7 +42,7 @@ impl MasterPath {
     }
 }
 
-type Standard = RichText;
+type Standard = Vec<RichText>;
 type LineSeparation = Vec<RichText>;
 type AllLineSeparation = Vec<RichText>;
 
@@ -57,6 +57,9 @@ impl FileForm {
     fn get_standard_mut(&mut self) -> &mut Option<Standard> {
         &mut self.standard
     }
+    fn get_standard_ref(&self) -> &Option<Standard> {
+        &self.standard
+    }
 
     fn get_line_separation_mut(&mut self) -> &mut Option<LineSeparation> {
         &mut self.line_separation
@@ -68,40 +71,67 @@ impl FileForm {
     fn get_all_line_separation_mut(&mut self) -> &mut Option<AllLineSeparation> {
         &mut self.all_line_separation
     }
+    fn get_all_line_separation_ref(&self) -> &Option<AllLineSeparation> {
+        &self.all_line_separation
+    }
 }
 
+use crate::live_watch::settings::TextMode;
 impl FileForm {
     pub fn line_separation_ref(&self) -> &Option<LineSeparation> {
         &self.line_separation
     }
+
+    pub fn get_file_text(&self, text_mode: &TextMode) -> Option<&Vec<RichText>> {
+        match text_mode {
+            TextMode::Newline => self.get_line_separation_ref(),
+            TextMode::AllNewline => self.get_all_line_separation_ref(),
+            TextMode::Selectable => self.get_standard_ref(),
+            TextMode::Standard => self.get_standard_ref(),
+        }
+        .as_ref()
+    }
 }
 
-fn should_separate(chr: &char) -> bool {
-    if *chr != ' ' || *chr != '\n' {
-        return true;
-    }
-    false
-}
+// fn should_separate(chr: &char) -> bool {
+//     if *chr != ' ' || *chr != '\n' {
+//         return true;
+//     }
+//     false
+// }
+
 fn do_seperation(buffer: Vec<char>) -> String {
     buffer.into_iter().collect::<String>()
 }
 
 impl FileForm {
     fn new(
-        standard: Option<String>,
-        line_separation: Option<String>,
-        all_line_separation: Option<String>,
+        standard: bool,
+        line_separation: bool,
+        all_line_separation: bool,
+        file_string: String,
     ) -> FileForm {
-        let standard = standard.and_then(|s| Some(eframe_tools::make_rich(s, font_size_default())));
+        // let standard = standard.and_then(|s| {
+        let standard = if standard {
+            let s = file_string.clone();
+            let rt = eframe_tools::make_rich(s, font_size_default());
+            Some(vec![rt])
+        } else {
+            None
+        };
 
-        let line_separation = line_separation.and_then(|s| {
+        // let line_separation = line_separation.and_then(|s| {
+        let line_separation = if line_separation {
+            let s = file_string.clone();
             let mut rich_sep = Vec::new();
             let mut buffer = Vec::new();
             let mut track = false;
             let len = s.chars().count() - 1;
             for (index, chr) in s.chars().enumerate() {
                 buffer.push(chr);
-                if chr != ' ' || chr != '\n' && !track {
+
+                // we must remember whether there is only space/newline chars in the buffer
+                if chr != '\n' && !track {
                     track = true
                 }
 
@@ -117,14 +147,19 @@ impl FileForm {
             }
 
             Some(rich_sep)
-        });
+        } else {
+            None
+        };
 
-        let all_line_separation = all_line_separation.and_then(|s| {
+        // let all_line_separation = all_line_separation.and_then(|s| {
+        let all_line_separation = if all_line_separation {
+            let s = file_string;
             let mut rich_sep = Vec::new();
             let mut buffer = Vec::new();
-            for chr in s.chars() {
+            let len = s.chars().count() - 1;
+            for (index, chr) in s.chars().enumerate() {
                 buffer.push(chr);
-                if chr == '\n' {
+                if chr == '\n' || index == len {
                     let text = do_seperation(buffer);
                     let rich_text = make_rich(text, font_size_default());
                     rich_sep.push(rich_text);
@@ -132,7 +167,9 @@ impl FileForm {
                 }
             }
             Some(rich_sep)
-        });
+        } else {
+            None
+        };
 
         FileForm {
             standard,
@@ -178,7 +215,8 @@ impl File {
         let file_string = String::from_utf8(std::fs::read(path_buf)?)?;
 
         // TODO: Look at this more closesly. Should all fields be filled or Leave all but one field as None for FileForm::new(,,)?
-        let file_form = FileForm::new(Some(file_string.clone()), Some(file_string.clone()), None);
+        // let file_form = FileForm::new(Some(file_string.clone()), Some(file_string.clone()), None);
+        let file_form = FileForm::new(true, true, true, file_string);
 
         let file = File {
             file: file_form,
@@ -291,6 +329,10 @@ impl WatchList {
         &mut self.mm
     }
 
+    fn get_modal_machine_ref(&self) -> &ModalMachine {
+        &self.mm
+    }
+
     fn get_file_update_rx_mut(&mut self) -> &mut Receiver<watcher_keep::WatcherUpdate> {
         &mut self.file_update_rx
     }
@@ -303,6 +345,9 @@ impl WatchList {
 impl WatchList {
     pub fn modal_machine_mut(&mut self) -> &mut ModalMachine {
         self.get_modal_machine_mut()
+    }
+    pub fn modal_machine_ref(&self) -> &ModalMachine {
+        &self.get_modal_machine_ref()
     }
 
     pub fn file_cache_ref(&self) -> &FileCache {
@@ -470,6 +515,10 @@ fn load_dir_files(file_list: Vec<PathBuf>) -> CachedFiles {
     let mut cached_files = HashMap::new();
     file_list.into_iter().for_each(|s| {
         let f = if s.is_file() {
+            println!(
+                "FileName: -------<{}>-------",
+                s.file_name().unwrap().to_str().unwrap()
+            );
             Some(File::load_file(&s).unwrap())
         } else {
             None
